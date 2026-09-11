@@ -151,12 +151,42 @@
     color: #8a6d1f;
     display: none;
   }
+  .pdf-upload {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .pdf-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #f7f8fc;
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .pdf-label:hover { background: #eef0f8; }
+  .pdf-status {
+    font-size: 12px;
+    color: var(--sub);
+  }
 </style>
 </head>
 <body>
   <div class="app">
     <h1>音声読み上げアプリ</h1>
     <p class="subtitle">テキストを入力して、ブラウザに読み上げてもらいましょう。</p>
+
+    <div class="pdf-upload">
+      <label for="pdfInput" class="pdf-label">📄 PDFを読み込む</label>
+      <input type="file" id="pdfInput" accept="application/pdf" hidden>
+      <span class="pdf-status" id="pdfStatus"></span>
+    </div>
 
     <textarea id="textInput" placeholder="ここに読み上げたい文章を入力してください…"></textarea>
     <div class="char-count"><span id="charCount">0</span> 文字</div>
@@ -195,10 +225,13 @@
     </div>
   </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
 (function () {
   const textInput = document.getElementById('textInput');
   const charCount = document.getElementById('charCount');
+  const pdfInput = document.getElementById('pdfInput');
+  const pdfStatus = document.getElementById('pdfStatus');
   const voiceSelect = document.getElementById('voiceSelect');
   const rateRange = document.getElementById('rateRange');
   const pitchRange = document.getElementById('pitchRange');
@@ -211,6 +244,53 @@
   const stopBtn = document.getElementById('stopBtn');
   const status = document.getElementById('status');
   const warning = document.getElementById('warning');
+
+  if (window.pdfjsLib) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+
+  // 日本語PDFは1文字ずつ配置されていることが多く、そのまま抽出すると文字の間に
+  // 余計な空白が入ってしまうため、全角文字どうしの間の半角スペースを取り除く。
+  function normalizeJapaneseSpacing(text) {
+    const cjk = '\\u3000-\\u303F\\u3040-\\u30FF\\u3400-\\u4DBF\\u4E00-\\u9FFF\\uF900-\\uFAFF\\uFF00-\\uFFEF';
+    const re = new RegExp(`(?<=[${cjk}])[ \\t]+(?=[${cjk}])`, 'g');
+    return text.replace(re, '');
+  }
+
+  pdfInput.addEventListener('change', async () => {
+    const file = pdfInput.files[0];
+    if (!file) return;
+
+    if (!window.pdfjsLib) {
+      pdfStatus.textContent = 'PDFライブラリの読み込みに失敗しました。ネット接続をご確認ください。';
+      pdfInput.value = '';
+      return;
+    }
+
+    pdfStatus.textContent = 'PDFを読み込み中…';
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const pageTexts = [];
+
+      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+        pdfStatus.textContent = `PDFを読み込み中…（${pageNum}/${pdf.numPages}ページ）`;
+        const page = await pdf.getPage(pageNum);
+        const content = await page.getTextContent();
+        const pageText = content.items.map(item => item.str).join('');
+        pageTexts.push(pageText);
+      }
+
+      textInput.value = normalizeJapaneseSpacing(pageTexts.join('\n\n'));
+      charCount.textContent = textInput.value.length;
+      pdfStatus.textContent = `${file.name} から ${pdf.numPages} ページ分のテキストを取り込みました。`;
+    } catch (err) {
+      pdfStatus.textContent = 'PDFの読み込みに失敗しました。別のPDFファイルでお試しください。';
+    } finally {
+      pdfInput.value = '';
+    }
+  });
 
   if (!('speechSynthesis' in window)) {
     warning.style.display = 'block';
